@@ -1,0 +1,18 @@
+.{
+    .name = .MeowEngine,
+    .version = "0.1.0",
+    .minimum_zig_version = "0.15.2",
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "source",
+        "dependencies",
+        "developerDependencies"
+    },
+    .fingerprint = 0xe0f8c227d37ee0e3,
+    .dependencies = .{
+        .MeowUtilities = .{
+            .path = "../MeowUtilities"
+        }
+    }
+}
