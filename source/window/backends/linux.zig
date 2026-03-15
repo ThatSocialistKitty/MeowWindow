@@ -21,7 +21,7 @@ fn isSessionTypeWayland() bool {
 }
 
 pub const window: type = struct {
-    pub fn create(base: *systemMain.Base) !*backends.Window {
+    pub fn create(base: *systemMain.Window.Base) !*backends.Window {
         if (isSessionTypeWayland()) {
             return try waylandImplementation.window.create(base);
         } else {
@@ -39,7 +39,7 @@ pub const window: type = struct {
         return try waylandImplementation.window.createVulkanContext(self);
     }
     
-    pub fn emitEvents(self: *backends.Window) void {
+    pub fn emitEvents(self: *backends.Window) !void {
         if (isSessionTypeWayland()) {
             return waylandImplementation.window.emitEvents(self);
         }

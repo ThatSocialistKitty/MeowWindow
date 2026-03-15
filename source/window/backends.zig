@@ -10,7 +10,7 @@ const selectedBackend: type = switch (builtin.target.os.tag) {
 };
 
 pub const Window: type = opaque {
-    pub fn create(base: *systemMain.Base) !*@This() {
+    pub fn create(base: *systemMain.Window.Base) !*@This() {
         return try selectedBackend.window.create(base);
     }
     
@@ -22,7 +22,7 @@ pub const Window: type = opaque {
         return try selectedBackend.window.createVulkanContext(self);
     }
     
-    pub fn emitEvents(self: *@This()) void {
+    pub fn emitEvents(self: *@This()) !void {
         return selectedBackend.window.emitEvents(self);
     }
 };

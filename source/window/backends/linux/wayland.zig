@@ -28,15 +28,13 @@ const KeyboardImplementation: type = struct {
     xkbKeymapState: *wayland.xkb_state
 };
 
-// TODO: Complete this (+ return listener error in render function if exists in Implementation)
-
 pub const window: type = struct {
     const Implementation: type = struct {
-        base: *systemMain.Base,
+        base: *systemMain.Window.Base,
         waylandDisplay: *wayland.wl_display,
         waylandRegistry: *wayland.wl_registry,
+        eventError: ?window.EventError,
         waylandRegistryListener: wayland.wl_registry_listener,
-        listenerError: ?window.WaylandError = null,
         waylandCompositor: ?*wayland.wl_compositor = null,
         xdgWindowManagerBase: ?*wayland.xdg_wm_base = null,
         xdgWindowManagerBaseListener: wayland.xdg_wm_base_listener,
@@ -108,14 +106,14 @@ pub const window: type = struct {
         }
         
         const xkbContext: *wayland.xkb_context = wayland.xkb_context_new(wayland.XKB_CONTEXT_NO_FLAGS) orelse {
-            windowImplementation.listenerError = WaylandError.ObjectRetrievalFailure;
+            windowImplementation.eventError = EventError.ObjectRetrievalFailure;
             return;
         };
         
         const xkbKeymapString: [*:0]const u8 = @ptrCast(stdC.mmap(null,size,stdC.PROT_READ,stdC.MAP_SHARED,fileDescriptor,0).?);
         
         const xkbKeymap: *wayland.xkb_keymap = wayland.xkb_keymap_new_from_string(xkbContext,xkbKeymapString,wayland.XKB_KEYMAP_FORMAT_TEXT_V1,wayland.XKB_KEYMAP_COMPILE_NO_FLAGS) orelse {
-            windowImplementation.listenerError = WaylandError.ObjectRetrievalFailure;
+            windowImplementation.eventError = EventError.ObjectRetrievalFailure;
             return;
         };
         
@@ -123,7 +121,7 @@ pub const window: type = struct {
         _ = stdC.close(fileDescriptor);
         
         const xkbKeymapState: *wayland.xkb_state = wayland.xkb_state_new(xkbKeymap) orelse {
-            windowImplementation.listenerError = WaylandError.ObjectRetrievalFailure;
+            windowImplementation.eventError = EventError.ObjectRetrievalFailure;
             return;
         };
         
@@ -149,17 +147,12 @@ pub const window: type = struct {
     }
     
     fn waylandKeyboardKey(data: ?*anyopaque,waylandKeyboard: ?*wayland.wl_keyboard,serial: u32,time: u32,key: u32,state: u32) callconv(.c) void {
-        const windowImplementation: *Implementation = @ptrCast(@alignCast(data));
-        
-        if (state == wayland.WL_KEYBOARD_KEY_STATE_PRESSED) {
-            // TODO: Continue (117 in C implmentation)
-        }
-        
+        _ = data;
         _ = waylandKeyboard;
         _ = serial;
         _ = time;
         _ = key;
-        _ = windowImplementation;
+        _ = state;
     }
     
     fn waylandKeyboardModifiers(data: ?*anyopaque,waylandKeyboard: ?*wayland.wl_keyboard,serial: u32,depressedModifiers: u32,latchedModifiers: u32,lockedModifiers: u32,group: u32) callconv(.c) void {
@@ -174,7 +167,7 @@ pub const window: type = struct {
             0,
             group
         ) == -1) {
-            windowImplementation.listenerError = WaylandError.UpdateFailure;
+            windowImplementation.eventError = EventError.UpdateFailure;
             return;
         }
         
@@ -187,14 +180,14 @@ pub const window: type = struct {
         
         if (std.mem.eql(u8,std.mem.span(interface),"wl_compositor")) {
             windowImplementation.waylandCompositor = @ptrCast(wayland.wl_registry_bind(waylandRegistry,name,&wayland.wl_compositor_interface,4) orelse {
-                windowImplementation.listenerError = WaylandError.ObjectRetrievalFailure;
+                windowImplementation.eventError = EventError.ObjectRetrievalFailure;
                 return;
             });
         }
         
         if (std.mem.eql(u8,std.mem.span(interface),"xdg_wm_base")) {
             windowImplementation.xdgWindowManagerBase = @ptrCast(wayland.wl_registry_bind(waylandRegistry,name,&wayland.xdg_wm_base_interface,1) orelse {
-                windowImplementation.listenerError = WaylandError.ObjectRetrievalFailure;
+                windowImplementation.eventError = EventError.ObjectRetrievalFailure;
                 return;
             });
             
@@ -203,19 +196,19 @@ pub const window: type = struct {
             };
             
             if (wayland.xdg_wm_base_add_listener(windowImplementation.xdgWindowManagerBase,&windowImplementation.xdgWindowManagerBaseListener,windowImplementation) == -1) {
-                windowImplementation.listenerError = WaylandError.AddListenerFailure;
+                windowImplementation.eventError = EventError.AddListenerFailure;
                 return;
             }
         }
         
         if (std.mem.eql(u8,std.mem.span(interface),"wl_seat")) {
             windowImplementation.waylandSeat = @ptrCast(wayland.wl_registry_bind(waylandRegistry,name,&wayland.wl_seat_interface,1) orelse {
-                windowImplementation.listenerError = WaylandError.ObjectRetrievalFailure;
+                windowImplementation.eventError = EventError.ObjectRetrievalFailure;
                 return;
             });
             
             windowImplementation.pointer.waylandPointer = wayland.wl_seat_get_pointer(windowImplementation.waylandSeat) orelse {
-                windowImplementation.listenerError = WaylandError.ObjectRetrievalFailure;
+                windowImplementation.eventError = EventError.ObjectRetrievalFailure;
                 return;
             };
             
@@ -234,12 +227,12 @@ pub const window: type = struct {
             };
             
             if (wayland.wl_pointer_add_listener(windowImplementation.pointer.waylandPointer,&windowImplementation.pointer.waylandListener,windowImplementation) == -1) {
-                windowImplementation.listenerError = WaylandError.AddListenerFailure;
+                windowImplementation.eventError = EventError.AddListenerFailure;
                 return;
             }
             
             windowImplementation.keyboard.waylandKeyboard = wayland.wl_seat_get_keyboard(windowImplementation.waylandSeat) orelse {
-                windowImplementation.listenerError = WaylandError.ObjectRetrievalFailure;
+                windowImplementation.eventError = EventError.ObjectRetrievalFailure;
                 return;
             };
             
@@ -253,7 +246,7 @@ pub const window: type = struct {
             };
             
             if (wayland.wl_keyboard_add_listener(windowImplementation.keyboard.waylandKeyboard,&windowImplementation.keyboard.waylandListener,windowImplementation) == -1) {
-                windowImplementation.listenerError = WaylandError.AddListenerFailure;
+                windowImplementation.eventError = EventError.AddListenerFailure;
                 return;
             }
         }
@@ -268,7 +261,7 @@ pub const window: type = struct {
         
         if (windowImplementation.sizeChanged) {
             windowImplementation.vulkanContext.createSwapchain(windowImplementation.base.size) catch {
-                windowImplementation.listenerError = WaylandError.AddListenerFailure;
+                windowImplementation.eventError = EventError.AddListenerFailure;
                 return;
             };
             
@@ -278,7 +271,8 @@ pub const window: type = struct {
     
     fn xdgWindowToplevelClose(data: ?*anyopaque,xdgToplevel: ?*wayland.xdg_toplevel) callconv(.c) void {
         const windowImplementation: *Implementation = @ptrCast(@alignCast(data));
-        windowImplementation.base.running = false;
+        
+        windowImplementation.base.eventBus.emit(.close,.{windowImplementation.base.self});
         
         _ = xdgToplevel;
     }
@@ -299,38 +293,46 @@ pub const window: type = struct {
         _ = states;
     }
     
-    const WaylandError: type = error {
+    const CreationError: type = error {
         ObjectRetrievalFailure,
         AddListenerFailure,
         DispatchFailure,
         MissingGlobals,
+        EventError
+    };
+    
+    const EventError: type = error {
+        ObjectRetrievalFailure,
+        AddListenerFailure,
         UpdateFailure
     };
     
-    pub fn create(base: *systemMain.Base) WaylandError!*backends.Window {
+    pub fn create(base: *systemMain.Window.Base) CreationError!*backends.Window {
         const windowImplementation: *Implementation = base.allocator.create(Implementation) catch unreachable;
         
         errdefer destroy(@ptrCast(windowImplementation));
         
         windowImplementation.base = base;
         
-        windowImplementation.waylandDisplay = wayland.wl_display_connect(null) orelse return WaylandError.ObjectRetrievalFailure;
+        windowImplementation.waylandDisplay = wayland.wl_display_connect(null) orelse return CreationError.ObjectRetrievalFailure;
         
-        windowImplementation.waylandRegistry = wayland.wl_display_get_registry(windowImplementation.waylandDisplay) orelse return WaylandError.ObjectRetrievalFailure;
+        windowImplementation.waylandRegistry = wayland.wl_display_get_registry(windowImplementation.waylandDisplay) orelse return CreationError.ObjectRetrievalFailure;
+        
+        windowImplementation.eventError = null;
         
         windowImplementation.waylandRegistryListener = wayland.wl_registry_listener {
             .global = waylandRegistryGlobal
         };
         
-        if (wayland.wl_registry_add_listener(windowImplementation.waylandRegistry,&windowImplementation.waylandRegistryListener,windowImplementation) == -1) return WaylandError.AddListenerFailure;
+        if (wayland.wl_registry_add_listener(windowImplementation.waylandRegistry,&windowImplementation.waylandRegistryListener,windowImplementation) == -1) return CreationError.AddListenerFailure;
         
-        if (wayland.wl_display_roundtrip(windowImplementation.waylandDisplay) == -1) return WaylandError.DispatchFailure;
+        if (wayland.wl_display_roundtrip(windowImplementation.waylandDisplay) == -1) return CreationError.DispatchFailure;
         
         if (windowImplementation.waylandCompositor == null or windowImplementation.xdgWindowManagerBase == null or windowImplementation.waylandSeat == null) {
-            return WaylandError.MissingGlobals;
+            return CreationError.MissingGlobals;
         }
         
-        windowImplementation.waylandSurface = wayland.wl_compositor_create_surface(windowImplementation.waylandCompositor) orelse return WaylandError.ObjectRetrievalFailure;
+        windowImplementation.waylandSurface = wayland.wl_compositor_create_surface(windowImplementation.waylandCompositor) orelse return CreationError.ObjectRetrievalFailure;
         
         windowImplementation.waylandSurfaceListener = wayland.wl_surface_listener {
             .enter = null,
@@ -339,19 +341,19 @@ pub const window: type = struct {
             .preferred_buffer_transform = null
         };
         
-        if (wayland.wl_surface_add_listener(windowImplementation.waylandSurface,&windowImplementation.waylandSurfaceListener,windowImplementation) == -1) return WaylandError.AddListenerFailure;
+        if (wayland.wl_surface_add_listener(windowImplementation.waylandSurface,&windowImplementation.waylandSurfaceListener,windowImplementation) == -1) return CreationError.AddListenerFailure;
         
-        windowImplementation.xdgSurface = wayland.xdg_wm_base_get_xdg_surface(windowImplementation.xdgWindowManagerBase,windowImplementation.waylandSurface) orelse return WaylandError.ObjectRetrievalFailure;
+        windowImplementation.xdgSurface = wayland.xdg_wm_base_get_xdg_surface(windowImplementation.xdgWindowManagerBase,windowImplementation.waylandSurface) orelse return CreationError.ObjectRetrievalFailure;
         
         windowImplementation.xdgSurfaceListener = wayland.xdg_surface_listener {
             .configure = xdgSurfaceConfigure
         };
         
-        if (wayland.xdg_surface_add_listener(windowImplementation.xdgSurface,&windowImplementation.xdgSurfaceListener,windowImplementation) == -1) return WaylandError.AddListenerFailure;
+        if (wayland.xdg_surface_add_listener(windowImplementation.xdgSurface,&windowImplementation.xdgSurfaceListener,windowImplementation) == -1) return CreationError.AddListenerFailure;
         
         switch (windowImplementation.base.kind) {
             .Toplevel => {
-                windowImplementation.xdgWindow.toplevel = wayland.xdg_surface_get_toplevel(windowImplementation.xdgSurface) orelse return WaylandError.ObjectRetrievalFailure;
+                windowImplementation.xdgWindow.toplevel = wayland.xdg_surface_get_toplevel(windowImplementation.xdgSurface) orelse return CreationError.ObjectRetrievalFailure;
                 
                 windowImplementation.xdgWindowListener.toplevel = wayland.xdg_toplevel_listener {
                     .close = xdgWindowToplevelClose,
@@ -360,9 +362,9 @@ pub const window: type = struct {
                     .wm_capabilities = null
                 };
                 
-                if (wayland.xdg_toplevel_add_listener(windowImplementation.xdgWindow.toplevel,&windowImplementation.xdgWindowListener.toplevel,windowImplementation) == -1) return WaylandError.AddListenerFailure;
+                if (wayland.xdg_toplevel_add_listener(windowImplementation.xdgWindow.toplevel,&windowImplementation.xdgWindowListener.toplevel,windowImplementation) == -1) return CreationError.AddListenerFailure;
                 
-                wayland.xdg_toplevel_set_title(windowImplementation.xdgWindow.toplevel,windowImplementation.base.title);
+                wayland.xdg_toplevel_set_title(windowImplementation.xdgWindow.toplevel,windowImplementation.base.title.ptr);
             }
         }
         
@@ -370,16 +372,37 @@ pub const window: type = struct {
         
         wayland.wl_surface_commit(windowImplementation.waylandSurface);
         
-        meowUtilities.log.debug("Created Linux Wayland windowImplementation :3",.{});
-        
         return @ptrCast(windowImplementation);
     }
-    
-    pub fn destroy(self: *backends.Window) void {
-        const windowImplementation: *Implementation = @ptrCast(@alignCast(self));
-        windowImplementation.base.allocator.destroy(windowImplementation);
-    }
-    
+   
+    // TODO: Plagerize
+pub fn destroy(self: *backends.Window) void {
+    const windowImpl: *Implementation = @ptrCast(@alignCast(self));
+
+    // Destroy XDG Toplevel
+    wayland.xdg_toplevel_destroy(windowImpl.xdgWindow.toplevel);
+
+    // Destroy XDG Surface
+    wayland.xdg_surface_destroy(windowImpl.xdgSurface);
+
+    // Destroy Wayland Surface
+    wayland.wl_surface_destroy(windowImpl.waylandSurface);
+
+    // Destroy XDG Window Manager Base
+    wayland.xdg_wm_base_destroy(windowImpl.xdgWindowManagerBase);
+
+    // Destroy Wayland Seat
+    wayland.wl_seat_destroy(windowImpl.waylandSeat);
+
+    // Destroy Registry
+    wayland.wl_registry_destroy(windowImpl.waylandRegistry);
+
+    // Disconnect Display
+    wayland.wl_display_disconnect(windowImpl.waylandDisplay);
+
+    // Free memory
+    windowImpl.base.allocator.destroy(windowImpl);
+}    
     pub fn createVulkanContext(self: *backends.Window) vulkan.Context.CreationError!*vulkan.Context {
         const windowImplementation: *Implementation = @ptrCast(@alignCast(self));
         const context: *vulkan.Context = try vulkan.Context.create(
@@ -399,7 +422,7 @@ pub const window: type = struct {
     
     // TODO: Plagiarize
     
-    pub fn emitEvents(self: *backends.Window) void {
+    pub fn emitEvents(self: *backends.Window) EventError!void {
         const windowImplementation: *Implementation = @ptrCast(@alignCast(self));
         
         // Step 1: dispatch any pending events first
@@ -431,6 +454,10 @@ pub const window: type = struct {
         } else {
             // nothing to read right now
             wayland.wl_display_cancel_read(windowImplementation.waylandDisplay);
+        }
+        
+        if (windowImplementation.eventError != null) {
+            return windowImplementation.eventError.?;
         }
     }
 };

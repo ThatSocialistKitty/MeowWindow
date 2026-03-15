@@ -31,7 +31,7 @@ const Texture: type = struct {
     roughnessFactor: ?f32 = null,
     metallicFactor: ?f32 = null,
     normal: ?TextureId = null,
-    normalFactor: f32 = null,
+    normalFactor: ?f32 = null,
     height: ?TextureId = null,
     opacity: ?TextureId = null,
     opacityFactor: ?f32 = null,
@@ -42,14 +42,14 @@ const Texture: type = struct {
 };
 
 const TextureCreateInformation: type = struct {
-    albedo: meowUtilities.miscellaneous.Image,
-    ambientOcclusion: ?meowUtilities.miscellaneous.Image,
-    roughness: ?meowUtilities.miscellaneous.Image,
-    metallic: ?meowUtilities.miscellaneous.Image,
-    normal: ?meowUtilities.miscellaneous.Image,
-    height: ?meowUtilities.miscellaneous.Image,
-    opacity: ?meowUtilities.miscellaneous.Image,
-    emission: ?meowUtilities.miscellaneous.Image
+    albedo: *meowUtilities.miscellaneous.Image,
+    ambientOcclusion: ?*meowUtilities.miscellaneous.Image = null,
+    roughness: ?*meowUtilities.miscellaneous.Image = null,
+    metallic: ?*meowUtilities.miscellaneous.Image = null,
+    normal: ?*meowUtilities.miscellaneous.Image = null,
+    height: ?*meowUtilities.miscellaneous.Image = null,
+    opacity: ?*meowUtilities.miscellaneous.Image = null,
+    emission: ?*meowUtilities.miscellaneous.Image = null
 };
 
 pub const Context: type = opaque {
@@ -272,11 +272,18 @@ pub const Context: type = opaque {
         vulkan.vkFreeMemory(context.device,stagingBufferDeviceMemory,null);
     }
     
-    fn createTexture(createInformation: TextureCreateInformation) Texture {
-        _ = createInformation;
+    fn createTexture(textureCreateInformation: TextureCreateInformation) Texture {
+        // _ = textureCreateInformation;
+        
+        const albedoIterator: *meowUtilities.miscellaneous.Image.Iterator = textureCreateInformation.albedo.iterate();
+        defer albedoIterator.destroy();
+        
+        while (albedoIterator.next()) |pixel| {
+            meowUtilities.log.debug("{any}",.{pixel});
+        }
         
         return .{
-            
+            .albedo = 69
         };
     }
     
@@ -287,8 +294,7 @@ pub const Context: type = opaque {
         context.graphicsPipelineIndexBufferData.appendSlice(context.allocator,indices) catch unreachable;
         try copyToStagingToBuffer(context,context.graphicsPipelineIndexBuffer,u16,context.graphicsPipelineIndexBufferData.items);
         
-        // try createTexture(textureCreateInformation);
-        _ = textureCreateInformation;
+        _ = createTexture(textureCreateInformation);
     }
     
     pub const CreationError: type = error {
@@ -307,7 +313,7 @@ pub const Context: type = opaque {
         projection: meowUtilities.math.Matrix(4,4)
     };
     
-    pub fn create(allocator: std.mem.Allocator,windowHandles: *anyopaque,platform: @Type(.enum_literal),imageSize: @Vector(2,i32)) CreationError!*Context {
+    pub fn create(allocator: std.mem.Allocator,windowHandles: *anyopaque,platform: @Type(.enum_literal),imageSize: [2]i32) CreationError!*Context {
         const context: *Implementation = allocator.create(Implementation) catch unreachable;
         
         const methods: *Context = @ptrCast(context);
@@ -589,20 +595,19 @@ pub const Context: type = opaque {
             const vertexShaderModule: vulkan.VkShaderModule = createShaderModuleFromFile(context,"shaders/shader.vert.spv") catch return CreationError.FileSystemFailure;
             const fragmentShaderModule: vulkan.VkShaderModule = createShaderModuleFromFile(context,"shaders/shader.frag.spv") catch return CreationError.FileSystemFailure;
             
-            const shaderStageCreateInformations: []vulkan.VkPipelineShaderStageCreateInfo = context.allocator.alloc(vulkan.VkPipelineShaderStageCreateInfo,2) catch unreachable;
-            
-            shaderStageCreateInformations[0] = .{
-                .sType = vulkan.VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
-                .stage = vulkan.VK_SHADER_STAGE_VERTEX_BIT,
-                .module = vertexShaderModule,
-                .pName = "main"
-            };
-            
-            shaderStageCreateInformations[1] = .{
-                .sType = vulkan.VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
-                .stage = vulkan.VK_SHADER_STAGE_FRAGMENT_BIT,
-                .module = fragmentShaderModule,
-                .pName = "main"
+            const shaderStageCreateInformations: [2]vulkan.VkPipelineShaderStageCreateInfo = .{
+                .{
+                    .sType = vulkan.VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+                    .stage = vulkan.VK_SHADER_STAGE_VERTEX_BIT,
+                    .module = vertexShaderModule,
+                    .pName = "main"
+                },
+                .{
+                    .sType = vulkan.VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+                    .stage = vulkan.VK_SHADER_STAGE_FRAGMENT_BIT,
+                    .module = fragmentShaderModule,
+                    .pName = "main"
+                }
             };
             
             const vertexInputBindingDescription: vulkan.VkVertexInputBindingDescription = .{
@@ -781,7 +786,7 @@ pub const Context: type = opaque {
             
             const graphicsPipelineCreateInformation: vulkan.VkGraphicsPipelineCreateInfo = .{
                 .sType = vulkan.VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
-                .pStages = shaderStageCreateInformations.ptr,
+                .pStages = &shaderStageCreateInformations,
                 .stageCount = @intCast(shaderStageCreateInformations.len),
                 .pVertexInputState = &vertexInputStateCreateInformation,
                 .pInputAssemblyState = &inputAssemblyStateCreateInformation,
@@ -960,8 +965,6 @@ pub const Context: type = opaque {
             }
         );
         
-        meowUtilities.log.debug("Created Vulkan context :3",.{});
-        
         return @ptrCast(context);
     }
     
@@ -1091,7 +1094,7 @@ pub const Context: type = opaque {
         context.graphicsPipelinePreviousRenderEndTimestamp = nowTimestamp;
     }
     
-    pub fn createSwapchain(self: *@This(),imageSize: @Vector(2,i32)) CreationError!void {
+    pub fn createSwapchain(self: *@This(),imageSize: [2]i32) CreationError!void {
         const context: *Implementation = @ptrCast(@alignCast(self));
         
         _ = vulkan.vkDeviceWaitIdle(context.device);
