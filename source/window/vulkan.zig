@@ -141,7 +141,7 @@ pub const Context: type = opaque {
     }
     
     fn createShaderModuleFromFile(context: *Implementation,path: []const u8) !vulkan.VkShaderModule {
-        var selfDirectory: std.fs.Dir = try meowUtilities.fileSystem.getSelfDirectory(.{});
+        var selfDirectory: std.fs.Dir = try meowUtilities.fileSystem.openSelfDirectory(.{});
         defer selfDirectory.close();
         
         const file: std.fs.File = try selfDirectory.openFile(path,.{
@@ -275,12 +275,7 @@ pub const Context: type = opaque {
     fn createTexture(textureCreateInformation: TextureCreateInformation) Texture {
         // _ = textureCreateInformation;
         
-        const albedoIterator: *meowUtilities.miscellaneous.Image.Iterator = textureCreateInformation.albedo.iterate();
-        defer albedoIterator.destroy();
-        
-        while (albedoIterator.next()) |pixel| {
-            meowUtilities.log.debug("{any}",.{pixel});
-        }
+        meowUtilities.log.debug("{any}",.{textureCreateInformation.albedo.getPixels()[0]});
         
         return .{
             .albedo = 69
