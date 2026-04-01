@@ -1,5 +1,5 @@
 .{
-    .name = .MeowEngine,
+    .name = .MeowWindow,
     .version = "0.1.0",
     .minimum_zig_version = "0.15.2",
     .paths = .{
@@ -9,7 +9,7 @@
         "dependencies",
         "developerDependencies"
     },
-    .fingerprint = 0xe0f8c227d37ee0e3,
+    .fingerprint = 0x83b421779f4b790d,
     .dependencies = .{
         .MeowUtilities = .{
             .path = "../MeowUtilities"

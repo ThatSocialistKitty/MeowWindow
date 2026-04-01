@@ -273,9 +273,9 @@ pub const Context: type = opaque {
     }
     
     fn createTexture(textureCreateInformation: TextureCreateInformation) Texture {
-        // _ = textureCreateInformation;
+        // Register textures
         
-        meowUtilities.log.debug("{any}",.{textureCreateInformation.albedo.getPixels()[0]});
+        _ = textureCreateInformation;
         
         return .{
             .albedo = 69
@@ -294,7 +294,8 @@ pub const Context: type = opaque {
     
     pub const CreationError: type = error {
         ObjectRetrievalFailure,
-        FileSystemFailure
+        FileSystemFailure,
+        TextureCreationFailure
     };
     
     pub const WaylandWindowHandles: type = struct {
@@ -956,7 +957,7 @@ pub const Context: type = opaque {
             },
             &.{0,1,2,2,3,0},
             .{
-                .albedo = meowUtilities.miscellaneous.Image.createFromFile(context.allocator,"../../source/textures/meow.png") catch return CreationError.FileSystemFailure
+                .albedo = meowUtilities.miscellaneous.Image.createFromFile(context.allocator,"../../source/textures/meow.png") catch return CreationError.TextureCreationFailure
             }
         );
         

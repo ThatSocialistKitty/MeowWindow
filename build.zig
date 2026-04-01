@@ -81,8 +81,8 @@ pub fn build(b: *std.Build) !void {
         else => {}
     }
     
-    // const mainLibrary: *std.Build.Step.Compile = b.addLibrary(.{
-    //     .name = "main",
+    // const dependenciesLibrary: *std.Build.Step.Compile = b.addLibrary(.{
+    //     .name = "dependencies",
     //     .root_module = b.createModule(.{
     //         .target = target,
     //         .optimize = optimize,
@@ -92,12 +92,12 @@ pub fn build(b: *std.Build) !void {
     // });
     //
     // {
-    //     mainLibrary.addIncludePath(b.path("dependencies/Vulkan-Headers/include"));
+    //     dependenciesLibrary.addIncludePath(b.path("dependencies/Vulkan-Headers/include"));
     //
     //     const loaderDirectoryPath: std.Build.LazyPath = b.path("dependencies/Vulkan-Loader/loader");
-    //     mainLibrary.root_module.addIncludePath(loaderDirectoryPath);
-    //     mainLibrary.root_module.addIncludePath(loaderDirectoryPath.join(b.allocator,"generated") catch unreachable);
-    //     addSourceFiles(b,mainLibrary,loaderDirectoryPath,
+    //     dependenciesLibrary.root_module.addIncludePath(loaderDirectoryPath);
+    //     dependenciesLibrary.root_module.addIncludePath(loaderDirectoryPath.join(b.allocator,"generated") catch unreachable);
+    //     addSourceFiles(b,dependenciesLibrary,loaderDirectoryPath,
     //         &.{
     //             "-DVK_ENABLE_BETA_EXTENSIONS",
     //             // "-DVK_USE_PLATFORM_WIN32_KHR", // TODO: windows only
@@ -117,7 +117,7 @@ pub fn build(b: *std.Build) !void {
     //         }
     //     );
     //
-    //     b.installArtifact(mainLibrary);
+    //     b.installArtifact(dependenciesLibrary);
     // }
     
     // Once using Vulkan-Loader delete dis :p
