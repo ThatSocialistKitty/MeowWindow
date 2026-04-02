@@ -9,25 +9,20 @@ pub const Window: type = opaque {
         Toplevel
     };
     
-    const Events: type = struct {
-        pub fn close(window: *Window) void {
-            window.close();
-        }
-        
-        pub fn terminate() void {}
-        
-        pub fn resize() void {}
-        
-        pub fn maximize() void {}
-        
-        pub fn minimize() void {}
-        
-        pub fn fullscreen() void {}
-        
-        pub fn focus() void {}
-        
-        pub fn unfocus() void {}
-    };
+    // TODO: Create da other events meow :3
+    
+    const EventBus: type = meowUtilities.miscellaneous.EventBus(union(enum) {
+        close: struct {
+            window: *Window
+        },
+        // terminate: ,
+        // resize: ,
+        // maximize: ,
+        // minimize: ,
+        // fullscreen: ,
+        // focus: ,
+        // unfocus: 
+    });
     
     pub const Base: type = struct {
         allocator: std.mem.Allocator,
@@ -35,7 +30,9 @@ pub const Window: type = opaque {
         size: [2]i32,
         kind: Kind,
         running: bool,
-        eventBus: *meowUtilities.miscellaneous.EventBus(Events),
+        eventBus: *EventBus,
+        eventBusDefaultConsumer: *EventBus.Consumer,
+        eventBusRegularConsumer: *EventBus.Consumer,
         self: *Window
     };
     
@@ -59,6 +56,8 @@ pub const Window: type = opaque {
         window.base.kind = kind;
         window.base.running = true;
         window.base.eventBus = .create(window.base.allocator);
+        window.base.eventBusDefaultConsumer = window.base.eventBus.createConsumer();
+        window.base.eventBusRegularConsumer = window.base.eventBus.createConsumer();
         window.base.self = @ptrCast(window);
         window.backendWindow = backends.Window.create(&window.base) catch return CreationError.WindowInitializationFailure;
         window.vulkanContext = window.backendWindow.createVulkanContext() catch return CreationError.GraphicsInitializationFailure;
@@ -79,10 +78,23 @@ pub const Window: type = opaque {
     pub fn stepEventLoop(self: *@This()) bool {
         const window: *Implementation = @ptrCast(@alignCast(self));
         
+        while (window.base.eventBusDefaultConsumer.poll()) |event| {
+            if (!event.*.preventDefault) {
+                switch (event.*.data) {
+                    .close => |data| data.window.close()
+                }
+            }
+        }
+        
         window.backendWindow.emitEvents() catch unreachable;
         window.vulkanContext.renderFrame() catch unreachable;
         
         return window.base.running;
+    }
+    
+    pub fn pollEvents(self: *@This()) ?*EventBus.Event {
+        const window: *Implementation = @ptrCast(@alignCast(self));
+        return window.base.eventBusRegularConsumer.poll();
     }
     
     pub fn close(self: *@This()) void {

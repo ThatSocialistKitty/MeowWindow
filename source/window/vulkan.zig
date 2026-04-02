@@ -275,7 +275,7 @@ pub const Context: type = opaque {
     fn createTexture(textureCreateInformation: TextureCreateInformation) Texture {
         // Register textures
         
-        _ = textureCreateInformation;
+        meowUtilities.log.debug("Metadata: {any}",.{textureCreateInformation.albedo.getMetadata()});
         
         return .{
             .albedo = 69

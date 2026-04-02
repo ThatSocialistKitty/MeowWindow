@@ -272,7 +272,13 @@ pub const window: type = struct {
     fn xdgWindowToplevelClose(data: ?*anyopaque,xdgToplevel: ?*wayland.xdg_toplevel) callconv(.c) void {
         const windowImplementation: *Implementation = @ptrCast(@alignCast(data));
         
-        windowImplementation.base.eventBus.emit(.close,.{windowImplementation.base.self});
+        windowImplementation.base.eventBus.append(.{
+            .data = .{
+                .close = .{
+                    .window = windowImplementation.base.self
+                }
+            }
+        });
         
         _ = xdgToplevel;
     }
