@@ -18,8 +18,8 @@ pub const Window: type = opaque {
         selectedBackend.window.destroy(self);
     }
     
-    pub fn createVulkanContext(self: *@This()) vulkan.Context.CreationError!*vulkan.Context {
-        return try selectedBackend.window.createVulkanContext(self);
+    pub fn createGraphicsContext(self: *@This()) vulkan.Context.CreationError!*vulkan.Context {
+        return try selectedBackend.window.createGraphicsContext(self);
     }
     
     pub fn emitEvents(self: *@This()) !void {

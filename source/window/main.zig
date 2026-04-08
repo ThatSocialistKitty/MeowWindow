@@ -39,7 +39,7 @@ pub const Window: type = opaque {
     const Implementation: type = struct {
         base: Base,
         backendWindow: *backends.Window,
-        vulkanContext: *vulkan.Context
+        graphicsContext: *vulkan.Context
     };
     
     pub const CreationError: type = error {
@@ -60,7 +60,7 @@ pub const Window: type = opaque {
         window.base.eventBusRegularConsumer = window.base.eventBus.createConsumer();
         window.base.self = @ptrCast(window);
         window.backendWindow = backends.Window.create(&window.base) catch return CreationError.WindowInitializationFailure;
-        window.vulkanContext = window.backendWindow.createVulkanContext() catch return CreationError.GraphicsInitializationFailure;
+        window.graphicsContext = window.backendWindow.createGraphicsContext() catch return CreationError.GraphicsInitializationFailure;
         
         return @ptrCast(window);
     }
@@ -71,7 +71,8 @@ pub const Window: type = opaque {
         window.base.allocator.free(window.base.title);
         window.base.eventBus.destroy();
         window.backendWindow.destroy();
-        window.vulkanContext.destroy();
+        window.graphicsContext.destroy();
+        
         window.base.allocator.destroy(window);
     }
     
@@ -87,7 +88,7 @@ pub const Window: type = opaque {
         }
         
         window.backendWindow.emitEvents() catch unreachable;
-        window.vulkanContext.renderFrame() catch unreachable;
+        window.graphicsContext.renderFrame() catch unreachable;
         
         return window.base.running;
     }

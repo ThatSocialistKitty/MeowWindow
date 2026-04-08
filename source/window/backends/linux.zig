@@ -35,8 +35,8 @@ pub const window: type = struct {
         }
     }
     
-    pub fn createVulkanContext(self: *backends.Window) vulkan.Context.CreationError!*vulkan.Context {
-        return try waylandImplementation.window.createVulkanContext(self);
+    pub fn createGraphicsContext(self: *backends.Window) vulkan.Context.CreationError!*vulkan.Context {
+        return try waylandImplementation.window.createGraphicsContext(self);
     }
     
     pub fn emitEvents(self: *backends.Window) !void {

@@ -52,7 +52,7 @@ pub const window: type = struct {
             toplevel: wayland.xdg_toplevel_listener
         },
         sizeChanged: bool,
-        vulkanContext: *vulkan.Context
+        graphicsContext: *vulkan.Context
     };
     
     fn xdgWindowManagerBasePing(data: ?*anyopaque,xdgWindowManagerBase: ?*wayland.xdg_wm_base,serial: u32) callconv(.c) void {
@@ -260,7 +260,7 @@ pub const window: type = struct {
         wayland.xdg_surface_ack_configure(xdgSurface,serial);
         
         if (windowImplementation.sizeChanged) {
-            windowImplementation.vulkanContext.createSwapchain(windowImplementation.base.size) catch {
+            windowImplementation.graphicsContext.createSwapchain(windowImplementation.base.size) catch {
                 windowImplementation.eventError = EventError.AddListenerFailure;
                 return;
             };
@@ -409,7 +409,7 @@ pub fn destroy(self: *backends.Window) void {
     // Free memory
     windowImpl.base.allocator.destroy(windowImpl);
 }    
-    pub fn createVulkanContext(self: *backends.Window) vulkan.Context.CreationError!*vulkan.Context {
+    pub fn createGraphicsContext(self: *backends.Window) vulkan.Context.CreationError!*vulkan.Context {
         const windowImplementation: *Implementation = @ptrCast(@alignCast(self));
         const context: *vulkan.Context = try vulkan.Context.create(
             windowImplementation.base.allocator,
@@ -421,7 +421,7 @@ pub fn destroy(self: *backends.Window) void {
             windowImplementation.base.size
         );
         
-        windowImplementation.vulkanContext = context;
+        windowImplementation.graphicsContext = context;
         
         return context;
     }
