@@ -6,8 +6,7 @@
         "build.zig",
         "build.zig.zon",
         "source",
-        "dependencies",
-        "developerDependencies"
+        "dependencies"
     },
     .fingerprint = 0x83b421779f4b790d,
     .dependencies = .{

@@ -76,6 +76,7 @@ pub fn build(b: *std.Build) !void {
             });
             
             mainModule.linkSystemLibrary("wayland-client",.{});
+            mainModule.linkSystemLibrary("wayland-cursor",.{});
             mainModule.linkSystemLibrary("xkbcommon",.{});
         },
         else => {}
