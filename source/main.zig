@@ -2,12 +2,55 @@ const std: type = @import("std");
 const builtin: type = @import("builtin");
 const meowUtilities: type = @import("MeowUtilities");
 
-const Backend: type = switch (builtin.target.os.tag) {
-   .linux => @import("backends/linux.zig"),
-   else => |target| @compileError("There is no window backend implementation for \"" ++ @tagName(target) ++ "\"")
+const Backend: type = union(enum) {
+    wayland: *@import("backends/linux/wayland.zig")
 };
 
-pub const Window: type = opaque {
+pub const Context: type = struct {
+    allocator: std.mem.Allocator,
+    io: std.Io,
+    environMap: *std.process.Environ.Map,
+    
+    pub fn create(allocator: std.mem.Allocator,io: std.Io,environMap: *std.process.Environ.Map) Context {
+        var self: @This() = undefined;
+        
+        self.allocator = allocator;
+        self.io = io;
+        self.environMap = environMap;
+        
+        return self;
+    }
+    
+    pub fn createWindow(self: *@This(),title: []const u8,size: [2]u32,configuration: Window.Configuration) !Window {
+        return try .create(self,title,size,configuration);
+    }
+};
+
+pub const Window: type = struct {
+    base: *Base = undefined,
+    backend: Backend = undefined,
+    inputDevices: InputDevices = .{},
+    
+    const InputDevices: type = struct {
+        // display: *Display = undefined,
+        // displayState: DisplayState = .{},
+        keyboard: ?Keyboard = null,
+        keyboardState: ?KeyboardState = .{},
+        pointer: ?Pointer = null,
+        pointerState: ?PointerState = .{},
+        // touch: *Touch = undefined,
+        // touchState: TouchState = .{},
+        
+        const KeyboardState: type = struct {
+            heldKeys: std.bit_set.IntegerBitSet(@typeInfo(Keyboard.Key).@"enum".fields.len) = .empty
+        };
+        
+        const PointerState: type = struct {
+            heldButtons: std.bit_set.IntegerBitSet(@typeInfo(Pointer.Button).@"enum".fields.len) = .empty,
+            cursorPosition: [2]f32 = .{0,0}
+        };
+    };
+    
     // TODO: Create da other events meow :3
     
     const EventBus: type = meowUtilities.miscellaneous.EventBus(union(enum) {
@@ -28,110 +71,116 @@ pub const Window: type = opaque {
     };
     
     pub const Base: type = struct {
-        allocator: std.mem.Allocator,
+        context: *Context,
         title: [*:0]const u8,
         size: [2]u32,
         kind: Kind,
         fullscreenKey: ?Keyboard.Key,
         running: bool,
-        state: struct {
-            fullscreen: bool
-        },
-        eventBus: *EventBus,
-        // displayEventBus: *Display.EventBus,
-        keyboardEventBus: *Keyboard.EventBus,
-        pointerEventBus: *Pointer.EventBus,
-        // touchEventBus: *Touch.EventBus
-    };
-    
-    const Implementation: type = struct {
-        base: Base,
-        // display: struct {
-        //     keyboard: *Display,
-        //     state: struct {
-        //         
-        //     }
-        // },
-        keyboard: ?struct {
-            keyboard: *Keyboard,
-            state: struct {
-                heldKeys: std.bit_set.IntegerBitSet(@typeInfo(Keyboard.Key).@"enum".fields.len)
-            }
-        },
-        pointer: ?struct {
-            pointer: *Pointer,
-            state: struct {
-                heldButtons: std.bit_set.IntegerBitSet(@typeInfo(Pointer.Button).@"enum".fields.len),
-                cursorPosition: [2]f32
-            }
-        },
-        // touch: ?struct {
-        //     touch: *Touch,
-        //     state: struct {
-        //         
-        //     }
-        // },
-        backend: *Backend
+        state: State,
+        eventBus: EventBus,
+        // displayEventBus: Display.EventBus,
+        keyboardEventBus: ?Keyboard.EventBus,
+        pointerEventBus: ?Pointer.EventBus,
+        // touchEventBus: ?Touch.EventBus,
+        
+        const State: type = struct {
+            fullscreen: bool = false
+        };
     };
     
     const Configuration: type = struct {
-        kind: Kind = .Toplevel
+        kind: ?Kind = null
     };
     
-    pub fn create(allocator: std.mem.Allocator,title: []const u8,size: [2]u32,configuration: Configuration) !*@This() {
-        const window: *Implementation = allocator.create(Implementation) catch unreachable;
-        errdefer allocator.destroy(window);
+    fn create(context: *Context,title: []const u8,size: [2]u32,configuration: Configuration) !@This() {
+        var self: @This() = .{};
         
-        window.base.allocator = allocator;
+        self.base = context.allocator.create(Base) catch unreachable;
+        errdefer context.allocator.destroy(self.base);
         
-        window.base.title = window.base.allocator.dupeZ(u8,title) catch unreachable;
-        errdefer window.base.allocator.free(std.mem.span(window.base.title));
+        self.base.kind = .Toplevel;
+        self.base.fullscreenKey = .F11;
+        self.base.running = true;
+        self.base.state = .{};
+        self.base.keyboardEventBus = null;
+        self.base.pointerEventBus = null;
         
-        window.base.size = size;
-        window.base.kind = configuration.kind;
-        window.base.fullscreenKey = .F11;
-        window.base.running = true;
-        window.base.state = std.mem.zeroes(@TypeOf(window.base.state));
+        self.base.context = context;
         
-        window.base.eventBus = .create(window.base.allocator);
-        errdefer window.base.eventBus.destroy();
+        self.base.title = self.base.context.allocator.dupeZ(u8,title) catch unreachable;
+        errdefer self.base.context.allocator.free(std.mem.span(self.base.title));
         
-        window.base.keyboardEventBus = .create(window.base.allocator);
-        errdefer window.base.keyboardEventBus.destroy();
+        self.base.size = size;
         
-        window.base.pointerEventBus = .create(window.base.allocator);
-        errdefer window.base.pointerEventBus.destroy();
+        inline for (@typeInfo(@TypeOf(self)).@"struct".fields) |field| {
+            if (@hasField(@TypeOf(configuration),field.name)) {
+                const value = @field(configuration,field.name);
+                
+                if (value != null) {
+                    @field(self,field.name) = value.?;
+                }
+            }
+        }
         
-        window.keyboard = .{
-            .keyboard = .create(window),
-            .state = std.mem.zeroes(@TypeOf(window.keyboard.?.state))
+        self.base.eventBus = .create(self.base.context.allocator);
+        errdefer self.base.eventBus.destroy();
+        
+        // Keyboard
+        
+        
+            self.inputDevices.keyboard = .create(&self);
+            
+            self.base.keyboardEventBus = .create(self.base.context.allocator);
+            errdefer self.base.keyboardEventBus.?.destroy();
+        
+        
+        // Pointer
+        
+        
+            self.inputDevices.pointer = .create(&self);
+            
+            self.base.pointerEventBus = .create(self.base.context.allocator);
+            errdefer self.base.pointerEventBus.?.destroy();
+        
+        
+        self.backend = switch (builtin.target.os.tag) {
+            .linux => if (std.mem.eql(u8,self.base.context.environMap.get("XDG_SESSION_TYPE") orelse "","wayland"))
+                    .{
+                       .wayland = try .create(self.base)
+                    }
+                else
+                    return error.X11NotSupported,
+            // .windows => .{
+            //     .windows = Backend.Windows.create(self.base)
+            // },
+            else => |target| @compileError("Missing backend for \"" ++ @tagName(target) ++ "\"")
         };
-        errdefer window.keyboard.?.keyboard.destroy();
-        
-        window.pointer = .{
-            .pointer = .create(window),
-            .state = std.mem.zeroes(@TypeOf(window.pointer.?.state))
+        errdefer switch (self.backend) {
+            inline else => |backend| backend.destroy()
         };
-        errdefer window.pointer.?.pointer.destroy();
         
-        window.backend = try .create(&window.base);
-        errdefer window.backend.destroy();
-        
-        return @ptrCast(window);
+        return self;
     }
     
     pub fn destroy(self: *@This()) void {
-        const window: *Implementation = @ptrCast(@alignCast(self));
+        switch (self.backend) {
+            inline else => |backend| backend.destroy()
+        }
         
-        window.base.allocator.free(std.mem.span(window.base.title));
-        window.base.eventBus.destroy();
-        window.base.keyboardEventBus.destroy();
-        window.base.pointerEventBus.destroy();
-        window.keyboard.?.keyboard.destroy();
-        window.pointer.?.pointer.destroy();
-        window.backend.destroy();
+        if (self.inputDevices.pointer != null) {
+            self.base.pointerEventBus.?.destroy();
+        }
         
-        window.base.allocator.destroy(window);
+        if (self.inputDevices.keyboard != null) {
+            self.base.keyboardEventBus.?.destroy();
+        }
+        
+        self.base.eventBus.destroy();
+        
+        self.base.context.allocator.free(std.mem.span(self.base.title));
+        
+        self.base.context.allocator.destroy(self.base);
     }
     
     pub const RawHandles: type = union(enum) {
@@ -141,20 +190,18 @@ pub const Window: type = opaque {
         }
     };
     
-    pub fn getRawHandles(self: *@This()) RawHandles {
-        const window: *Implementation = @ptrCast(@alignCast(self));
-        return window.backend.getRawHandles();
+    pub fn getRawHandles(self: @This()) RawHandles {
+        return switch (self.backend) {
+            inline else => |backend| backend.getRawHandles()
+        };
     }
     
-    pub fn getSizePointer(self: *@This()) *const [2]u32 {
-        const window: *Implementation = @ptrCast(@alignCast(self));
-        return &window.base.size;
+    pub fn getSizePointer(self: @This()) *const [2]u32 {
+        return &self.base.size;
     }
     
     pub fn stepMainLoop(self: *@This()) bool {
-        const window: *Implementation = @ptrCast(@alignCast(self));
-        
-        while (window.base.eventBus.poll()) |event| {
+        while (self.base.eventBus.poll()) |event| {
             event.consume = true;
             
             switch (event.data) {
@@ -163,89 +210,85 @@ pub const Window: type = opaque {
             }
         }
         
-        while (window.base.keyboardEventBus.poll()) |event| {
-            event.consume = true;
-            
-            switch (event.data) {
-                .press => |data| {
-                    window.keyboard.?.state.heldKeys.set(@intFromEnum(data.key));
-                    
-                    if (window.base.fullscreenKey != null) {
-                        if (data.key == window.base.fullscreenKey.?) {
-                            self.setFullscreen(!self.getFullscreen());
+        if (self.inputDevices.keyboard != null) {
+            while (self.base.keyboardEventBus.?.poll()) |event| {
+                event.consume = true;
+                
+                switch (event.data) {
+                    .press => |data| {
+                        self.inputDevices.keyboardState.?.heldKeys.set(@intFromEnum(data.key));
+                        
+                        if (self.base.fullscreenKey != null) {
+                            if (data.key == self.base.fullscreenKey.?) {
+                                self.setFullscreen(!self.getFullscreen());
+                            }
                         }
-                    }
-                },
-                .release => |data| {
-                    window.keyboard.?.state.heldKeys.unset(@intFromEnum(data.key));
-                },
-                else => continue
+                    },
+                    .release => |data| self.inputDevices.keyboardState.?.heldKeys.unset(@intFromEnum(data.key)),
+                    else => continue
+                }
             }
         }
         
-        while (window.base.pointerEventBus.poll()) |event| {
-            event.consume = true;
-            
-            switch (event.data) {
-                .press => |data| {
-                    window.pointer.?.state.heldButtons.set(@intFromEnum(data.button));
-                },
-                .release => |data| {
-                    window.pointer.?.state.heldButtons.unset(@intFromEnum(data.button));
-                },
-                else => continue
+        if (self.inputDevices.pointer != null) {
+            while (self.base.pointerEventBus.?.poll()) |event| {
+                event.consume = true;
+                
+                switch (event.data) {
+                    .press => |data| self.inputDevices.pointerState.?.heldButtons.set(@intFromEnum(data.button)),
+                    .release => |data| self.inputDevices.pointerState.?.heldButtons.unset(@intFromEnum(data.button)),
+                    else => continue
+                }
             }
         }
         
-        window.backend.stepMainLoop() catch unreachable;
+        switch (self.backend) {
+            inline else => |backend| backend.stepMainLoop() catch {}
+        }
         
-        return window.base.running;
+        return self.base.running;
     }
     
     pub fn pollEvents(self: *@This()) ?*EventBus.Event {
-        const window: *Implementation = @ptrCast(@alignCast(self));
-        return window.base.eventBus.poll();
+        return self.base.eventBus.poll();
     }
     
     pub fn close(self: *@This()) void {
-        const window: *Implementation = @ptrCast(@alignCast(self));
-        window.base.running = false;
+        self.base.running = false;
     }
     
-    pub fn getSize(self: *@This()) [2]u32 {
-        const window: *Implementation = @ptrCast(@alignCast(self));
-        return window.base.size;
+    pub fn getSize(self: @This()) [2]u32 {
+        return self.base.size;
     }
     
     pub fn setFullscreen(self: *@This(),state: bool) void {
-        const window: *Implementation = @ptrCast(@alignCast(self));
-        window.backend.setFullscreen(state);
+        switch (self.backend) {
+            inline else => |backend| backend.setFullscreen(state)
+        }
     }
     
-    pub fn getFullscreen(self: *@This()) bool {
-        const window: *Implementation = @ptrCast(@alignCast(self));
-        return window.base.state.fullscreen;
+    pub fn getFullscreen(self: @This()) bool {
+        return self.base.state.fullscreen;
     }
     
-    pub fn setFullscreenKey(self: *@This(),key: ?Keyboard.Key) void {
-        const window: *Implementation = @ptrCast(@alignCast(self));
-        window.base.fullscreenKey = key;
+    pub fn setFullscreenKey(self: @This(),key: ?Keyboard.Key) void {
+        self.base.fullscreenKey = key;
     }
     
     // ...
     
-    pub fn getKeyboard(self: *@This()) ?*Keyboard {
-        const window: *Implementation = @ptrCast(@alignCast(self));
-        return window.keyboard.?.keyboard;
+    pub fn getKeyboard(self: @This()) ?Keyboard {
+        return self.inputDevices.keyboard;
     }
     
-    pub fn getPointer(self: *@This()) ?*Pointer {
-        const window: *Implementation = @ptrCast(@alignCast(self));
-        return window.pointer.?.pointer;
+    pub fn getPointer(self: @This()) ?Pointer {
+        return self.inputDevices.pointer;
     }
 };
 
-pub const Keyboard: type = opaque {
+pub const Keyboard: type = struct {
+    window: *Window,
+    
     pub const Key: type = enum {
         A,
         B,
@@ -410,33 +453,24 @@ pub const Keyboard: type = opaque {
         release: KeyEvent
     });
     
-    const Implementation: type = struct {
-        window: *Window.Implementation
-    };
-    
-    fn create(window: *Window.Implementation) *@This() {
-        const keyboard: *Implementation = window.base.allocator.create(Implementation) catch unreachable;
-        keyboard.window = window;
-        return @ptrCast(keyboard);
-    }
-    
-    fn destroy(self: *@This()) void {
-        const keyboard: *Implementation = @ptrCast(@alignCast(self));
-        keyboard.window.base.allocator.destroy(keyboard);
+    fn create(window: *Window) @This() {
+        var self: @This() = undefined;
+        self.window = window;
+        return self;
     }
     
     pub fn pollEvents(self: *@This()) ?*EventBus.Event {
-        const keyboard: *Implementation = @ptrCast(@alignCast(self));
-        return keyboard.window.base.keyboardEventBus.poll();
+        return self.window.base.keyboardEventBus.?.poll();
     }
     
-    pub fn isKeyDown(self: *@This(),key: Keyboard.Key) bool {
-        const keyboard: *Implementation = @ptrCast(@alignCast(self));
-        return keyboard.window.keyboard.?.state.heldKeys.isSet(@intFromEnum(key));
+    pub fn isKeyDown(self: @This(),key: Keyboard.Key) bool {
+        return self.window.inputDevices.keyboardState.?.heldKeys.isSet(@intFromEnum(key));
     }
 };
 
-pub const Pointer: type = opaque {
+pub const Pointer: type = struct {
+    window: *Window,
+    
     pub const Button: type = enum {
         Left,
         Right,
@@ -500,35 +534,23 @@ pub const Pointer: type = opaque {
         Hidden
     };
     
-    const Implementation: type = struct {
-        window: *Window.Implementation
-    };
-    
-    fn create(window: *Window.Implementation) *@This() {
-        const pointer: *Implementation = window.base.allocator.create(Implementation) catch unreachable;
-        pointer.window = window;
-        return @ptrCast(pointer);
-    }
-    
-    fn destroy(self: *@This()) void {
-        const pointer: *Implementation = @ptrCast(@alignCast(self));
-        pointer.window.base.allocator.destroy(pointer);
+    fn create(window: *Window) @This() {
+        var self: @This() = undefined;
+        self.window = window;
+        return self;
     }
     
     pub fn pollEvents(self: *@This()) ?*EventBus.Event {
-        const pointer: *Implementation = @ptrCast(@alignCast(self));
-        return pointer.window.base.pointerEventBus.poll();
+        return self.window.base.pointerEventBus.?.poll();
     }
     
-    
-    
-    pub fn isButtonDown(self: *@This(),button: Pointer.Button) bool {
-        const pointer: *Implementation = @ptrCast(@alignCast(self));
-        return pointer.window.pointer.?.state.heldButtons.isSet(@intFromEnum(button));
+    pub fn isButtonDown(self: @This(),button: Pointer.Button) bool {
+        return self.window.inputDevices.pointerState.?.heldButtons.isSet(@intFromEnum(button));
     }
     
     pub fn setCursor(self: *@This(),cursor: Cursor) !void {
-        const pointer: *Implementation = @ptrCast(@alignCast(self));
-        try pointer.window.backend.setCursor(cursor);
+        switch (self.backend) {
+            inline else => |backend| try backend.setCursor(cursor)
+        }
     }
 };

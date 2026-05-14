@@ -1,6 +1,5 @@
 const std: type = @import("std");
 const moduleMain: type = @import("../../main.zig");
-const LinuxBackend: type = @import("../linux.zig");
 const meowUtilities: type = @import("MeowUtilities");
 const wayland: type = @cImport({
     @cInclude("wayland-client.h");
@@ -18,49 +17,47 @@ const linux: type = @cImport({
     @cInclude("linux/input.h");
 });
 
-const Implementation: type = struct {
-    base: *moduleMain.Window.Base,
-    display: *wayland.wl_display,
-    registry: *wayland.wl_registry,
-    eventError: ?anyerror,
-    registryListener: wayland.wl_registry_listener,
-    compositor: ?*wayland.wl_compositor,
-    xdgWindowManagerBase: ?*wayland.xdg_wm_base,
-    xdgWindowManagerBaseListener: wayland.xdg_wm_base_listener,
-    seat: ?*wayland.wl_seat,
-    keyboard: struct {
-        keyboard: *wayland.wl_keyboard,
-        listener: wayland.wl_keyboard_listener,
-        xkbKeymap: *wayland.xkb_keymap,
-        xkbKeymapState: *wayland.xkb_state,
-        pressUnicode: [8]u8,
-        repeatRate: u32,
-        repeatDelay: u32,
-        repeatingUnicode: [8]u8,
-        repeatingEvent: ?moduleMain.Keyboard.KeyEvent,
-        repeatTimestamp: meowUtilities.time.Timestamp
-    },
-    pointer: struct {
-        pointer: *wayland.wl_pointer,
-        listener: wayland.wl_pointer_listener,
-        surface: *wayland.wl_surface,
-        theme: *wayland.wl_cursor_theme,
-        cursor: ?*wayland.wl_cursor,
-        imageIndex: u32,
-        updateTimestamp: meowUtilities.time.Timestamp,
-        enterSerial: u32
-    },
-    sharedMemoryBuffer: ?*wayland.wl_shm,
+base: *moduleMain.Window.Base = undefined,
+display: *wayland.wl_display = undefined,
+registry: *wayland.wl_registry = undefined,
+eventError: ?anyerror = null,
+registryListener: wayland.wl_registry_listener = undefined,
+compositor: ?*wayland.wl_compositor = null,
+xdgWindowManagerBase: ?*wayland.xdg_wm_base = null,
+xdgWindowManagerBaseListener: wayland.xdg_wm_base_listener = undefined,
+seat: ?*wayland.wl_seat = null,
+keyboard: Keyboard = undefined,
+pointer: Pointer = undefined,
+sharedMemoryBuffer: ?*wayland.wl_shm = null,
+surface: *wayland.wl_surface = undefined,
+xdgSurface: *wayland.xdg_surface = undefined,
+xdgSurfaceListener: wayland.xdg_surface_listener = undefined,
+xdgToplevel: *wayland.xdg_toplevel = undefined,
+xdgToplevelListener: wayland.xdg_toplevel_listener = undefined,
+sizeChanged: bool = false,
+
+const Keyboard: type = struct {
+    keyboard: *wayland.wl_keyboard,
+    listener: wayland.wl_keyboard_listener,
+    xkbKeymap: *wayland.xkb_keymap,
+    xkbKeymapState: *wayland.xkb_state,
+    pressUnicode: [8]u8,
+    repeatRate: u32,
+    repeatDelay: u32,
+    repeatingUnicode: [8]u8,
+    repeatingEvent: ?moduleMain.Keyboard.KeyEvent,
+    repeatTimestamp: meowUtilities.time.Timestamp
+};
+
+const Pointer: type = struct {
+    pointer: *wayland.wl_pointer,
+    listener: wayland.wl_pointer_listener,
     surface: *wayland.wl_surface,
-    xdgSurface: *wayland.xdg_surface,
-    xdgSurfaceListener: wayland.xdg_surface_listener,
-    xdgWindow: union(enum) {
-        toplevel: *wayland.xdg_toplevel
-    },
-    xdgWindowListener: union {
-        toplevel: wayland.xdg_toplevel_listener
-    },
-    sizeChanged: bool
+    theme: *wayland.wl_cursor_theme,
+    cursor: ?*wayland.wl_cursor,
+    imageIndex: u32,
+    updateTimestamp: meowUtilities.time.Timestamp,
+    enterSerial: u32
 };
 
 fn xdgWindowManagerBasePing(data: ?*anyopaque,xdgWindowManagerBase: ?*wayland.xdg_wm_base,serial: u32) callconv(.c) void {
@@ -69,7 +66,7 @@ fn xdgWindowManagerBasePing(data: ?*anyopaque,xdgWindowManagerBase: ?*wayland.xd
 }
 
 fn keyboardKeymap(data: ?*anyopaque,keyboard: ?*wayland.wl_keyboard,format: u32,fileDescriptor: i32,size: u32) callconv(.c) void {
-    const window: *Implementation = @ptrCast(@alignCast(data));
+    const self: *@This() = @ptrCast(@alignCast(data));
     
     if (format != wayland.WL_KEYBOARD_KEYMAP_FORMAT_XKB_V1) {
         _ = stdC.close(fileDescriptor);
@@ -77,14 +74,14 @@ fn keyboardKeymap(data: ?*anyopaque,keyboard: ?*wayland.wl_keyboard,format: u32,
     }
     
     const xkbContext: *wayland.xkb_context = wayland.xkb_context_new(wayland.XKB_CONTEXT_NO_FLAGS) orelse {
-        window.eventError = error.FailedToCreateXkbContext;
+        self.eventError = error.FailedToCreateXkbContext;
         return;
     };
     
     const xkbKeymapString: [*:0]const u8 = @ptrCast(stdC.mmap(null,size,stdC.PROT_READ,stdC.MAP_SHARED,fileDescriptor,0).?);
     
     const xkbKeymap: *wayland.xkb_keymap = wayland.xkb_keymap_new_from_string(xkbContext,xkbKeymapString,wayland.XKB_KEYMAP_FORMAT_TEXT_V1,wayland.XKB_KEYMAP_COMPILE_NO_FLAGS) orelse {
-        window.eventError = error.FailedToCreateXkbKeymap;
+        self.eventError = error.FailedToCreateXkbKeymap;
         return;
     };
     
@@ -92,12 +89,12 @@ fn keyboardKeymap(data: ?*anyopaque,keyboard: ?*wayland.wl_keyboard,format: u32,
     _ = stdC.close(fileDescriptor);
     
     const xkbKeymapState: *wayland.xkb_state = wayland.xkb_state_new(xkbKeymap) orelse {
-        window.eventError = error.FailedToCreateXkbState;
+        self.eventError = error.FailedToCreateXkbState;
         return;
     };
     
-    window.keyboard.xkbKeymap = xkbKeymap;
-    window.keyboard.xkbKeymapState = xkbKeymapState;
+    self.keyboard.xkbKeymap = xkbKeymap;
+    self.keyboard.xkbKeymapState = xkbKeymapState;
     
     _ = keyboard;
 }
@@ -118,16 +115,22 @@ fn keyboardLeave(data: ?*anyopaque,keyboard: ?*wayland.wl_keyboard,format: u32,s
 }
 
 fn keyboardKey(data: ?*anyopaque,keyboard: ?*wayland.wl_keyboard,serial: u32,time: u32,key: u32,state: u32) callconv(.c) void {
-    const window: *Implementation = @ptrCast(@alignCast(data));
+    const self: *@This() = @ptrCast(@alignCast(data));
     
     const keycode: wayland.xkb_keycode_t = key + 8;
-        
-    _ = wayland.xkb_state_update_key(window.keyboard.xkbKeymapState,keycode,wayland.XKB_KEY_DOWN);
     
-    const keyCharacterLength: c_int = wayland.xkb_state_key_get_utf8(window.keyboard.xkbKeymapState,keycode,&window.keyboard.pressUnicode,window.keyboard.pressUnicode.len);
+    const direction: c_uint = switch (state) {
+        wayland.WL_KEYBOARD_KEY_STATE_PRESSED => wayland.XKB_KEY_DOWN,
+        wayland.WL_KEYBOARD_KEY_STATE_RELEASED => wayland.XKB_KEY_UP,
+        else => return
+    };
+    
+    _ = wayland.xkb_state_update_key(self.keyboard.xkbKeymapState,keycode,direction);
+    
+    const keyCharacterLength: c_int = wayland.xkb_state_key_get_utf8(self.keyboard.xkbKeymapState,keycode,&self.keyboard.pressUnicode,self.keyboard.pressUnicode.len);
     
     const eventData: moduleMain.Keyboard.KeyEvent = .{
-        .key = switch (wayland.xkb_state_key_get_one_sym(window.keyboard.xkbKeymapState,keycode)) {
+        .key = switch (wayland.xkb_state_key_get_one_sym(self.keyboard.xkbKeymapState,keycode)) {
             wayland.XKB_KEY_A => .A,
             wayland.XKB_KEY_B => .B,
             wayland.XKB_KEY_C => .C,
@@ -278,42 +281,42 @@ fn keyboardKey(data: ?*anyopaque,keyboard: ?*wayland.wl_keyboard,serial: u32,tim
             wayland.XKB_KEY_XF86AudioMute => .Mute,
             else => .Unknown
         },
-        .unicode = if (keyCharacterLength > 0) window.keyboard.pressUnicode[0..@intCast(keyCharacterLength)] else null,
-        .timestamp = meowUtilities.time.getUniversalTimestamp()
+        .unicode = if (keyCharacterLength > 0) self.keyboard.pressUnicode[0..@intCast(keyCharacterLength)] else null,
+        .timestamp = meowUtilities.time.getUniversalTimestamp(self.base.context.io)
     };
     
     switch (state) {
         wayland.WL_KEYBOARD_KEY_STATE_PRESSED => {
-            if (wayland.xkb_keymap_key_repeats(window.keyboard.xkbKeymap,keycode) == 1) {
-                if (window.keyboard.repeatingEvent != null) {
-                    window.keyboard.repeatingEvent = null;
+            if (wayland.xkb_keymap_key_repeats(self.keyboard.xkbKeymap,keycode) == 1) {
+                if (self.keyboard.repeatingEvent != null) {
+                    self.keyboard.repeatingEvent = null;
                 }
                 
                 if (eventData.unicode != null) {
-                    @memcpy(&window.keyboard.repeatingUnicode,eventData.unicode.?.ptr);
+                    @memcpy(&self.keyboard.repeatingUnicode,eventData.unicode.?.ptr);
                 }
                 
-                window.keyboard.repeatingEvent = .{
+                self.keyboard.repeatingEvent = .{
                     .key = eventData.key,
-                    .unicode = if (eventData.unicode != null) window.keyboard.repeatingUnicode[0..eventData.unicode.?.len] else null,
+                    .unicode = if (eventData.unicode != null) self.keyboard.repeatingUnicode[0..eventData.unicode.?.len] else null,
                     .timestamp = eventData.timestamp
                 };
                 
-                window.keyboard.repeatTimestamp = meowUtilities.time.getUniversalTimestamp() + @as(meowUtilities.time.Timestamp,window.keyboard.repeatDelay) * std.time.us_per_ms;
+                self.keyboard.repeatTimestamp = meowUtilities.time.getUniversalTimestamp(self.base.context.io).addDuration(.fromMilliseconds(self.keyboard.repeatDelay));
             }
             
-            window.base.keyboardEventBus.append(.{
+            self.base.keyboardEventBus.?.append(.{
                 .press = eventData
             });
         },
         wayland.WL_KEYBOARD_KEY_STATE_RELEASED => {
-            if (window.keyboard.repeatingEvent != null) {
-                if (window.keyboard.repeatingEvent.?.key == eventData.key) {
-                    window.keyboard.repeatingEvent = null;
+            if (self.keyboard.repeatingEvent != null) {
+                if (self.keyboard.repeatingEvent.?.key == eventData.key) {
+                    self.keyboard.repeatingEvent = null;
                 }
             }
             
-            window.base.keyboardEventBus.append(.{
+            self.base.keyboardEventBus.?.append(.{
                 .release = eventData
             });
         },
@@ -326,10 +329,10 @@ fn keyboardKey(data: ?*anyopaque,keyboard: ?*wayland.wl_keyboard,serial: u32,tim
 }
 
 fn keyboardModifiers(data: ?*anyopaque,keyboard: ?*wayland.wl_keyboard,serial: u32,depressedModifiers: u32,latchedModifiers: u32,lockedModifiers: u32,group: u32) callconv(.c) void {
-    const window: *Implementation = @ptrCast(@alignCast(data));
+    const self: *@This() = @ptrCast(@alignCast(data));
     
-    if (wayland.xkb_state_update_mask(window.keyboard.xkbKeymapState,depressedModifiers,latchedModifiers,lockedModifiers,0,0,group) == -1) {
-        window.eventError = error.FailedToUpdateXkbMask;
+    if (wayland.xkb_state_update_mask(self.keyboard.xkbKeymapState,depressedModifiers,latchedModifiers,lockedModifiers,0,0,group) == -1) {
+        self.eventError = error.FailedToUpdateXkbMask;
         return;
     }
     
@@ -338,18 +341,18 @@ fn keyboardModifiers(data: ?*anyopaque,keyboard: ?*wayland.wl_keyboard,serial: u
 }
 
 fn keyboardRepeatInformation(data: ?*anyopaque,keyboard: ?*wayland.wl_keyboard,rate: i32,delay: i32) callconv(.c) void {
-    const window: *Implementation = @ptrCast(@alignCast(data));
+    const self: *@This() = @ptrCast(@alignCast(data));
     
-    window.keyboard.repeatRate = @intCast(rate);
-    window.keyboard.repeatDelay = @intCast(delay);
+    self.keyboard.repeatRate = @intCast(rate);
+    self.keyboard.repeatDelay = @intCast(delay);
     
     _ = keyboard;
 }
 
 fn pointerEnter(data: ?*anyopaque,pointer: ?*wayland.wl_pointer,serial: u32,surface: ?*wayland.wl_surface,surfaceX: wayland.wl_fixed_t,surfaceY: wayland.wl_fixed_t) callconv(.c) void {
-    const window: *Implementation = @ptrCast(@alignCast(data));
+    const self: *@This() = @ptrCast(@alignCast(data));
     
-    window.pointer.enterSerial = serial;
+    self.pointer.enterSerial = serial;
     
     _ = pointer;
     _ = surface;
@@ -365,15 +368,15 @@ fn pointerLeave(data: ?*anyopaque,pointer: ?*wayland.wl_pointer,serial: u32,surf
 }
 
 fn pointerMotion(data: ?*anyopaque,pointer: ?*wayland.wl_pointer,time: u32,surfaceX: wayland.wl_fixed_t,surfaceY: wayland.wl_fixed_t) callconv(.c) void {
-    const window: *Implementation = @ptrCast(@alignCast(data));
+    const self: *@This() = @ptrCast(@alignCast(data));
     
-    window.base.pointerEventBus.append(.{
+    self.base.pointerEventBus.?.append(.{
         .move = .{
             .position = .{
                 @floatFromInt(wayland.wl_fixed_to_int(surfaceX)),
                 @floatFromInt(wayland.wl_fixed_to_int(surfaceY))
             },
-            .timestamp = meowUtilities.time.getUniversalTimestamp()
+            .timestamp = meowUtilities.time.getUniversalTimestamp(self.base.context.io)
         }
     });
     
@@ -382,7 +385,7 @@ fn pointerMotion(data: ?*anyopaque,pointer: ?*wayland.wl_pointer,time: u32,surfa
 }
 
 fn pointerButton(data: ?*anyopaque,pointer: ?*wayland.wl_pointer,serial: u32,time: u32,button: u32,state: u32) callconv(.c) void {
-    const window: *Implementation = @ptrCast(@alignCast(data));
+    const self: *@This() = @ptrCast(@alignCast(data));
     
     const eventData: moduleMain.Pointer.ButtonEvent = .{
         .button = switch (button) {
@@ -393,17 +396,17 @@ fn pointerButton(data: ?*anyopaque,pointer: ?*wayland.wl_pointer,serial: u32,tim
             linux.BTN_SIDE => .Previous,
             else => .Unknown
         },
-        .timestamp = meowUtilities.time.getUniversalTimestamp()
+        .timestamp = meowUtilities.time.getUniversalTimestamp(self.base.context.io)
     };
     
     switch (state) {
         wayland.WL_POINTER_BUTTON_STATE_PRESSED => {
-            window.base.pointerEventBus.append(.{
+            self.base.pointerEventBus.?.append(.{
                 .press = eventData
             });
         },
         wayland.WL_POINTER_BUTTON_STATE_RELEASED => {
-            window.base.pointerEventBus.append(.{
+            self.base.pointerEventBus.?.append(.{
                 .release = eventData
             });
         },
@@ -416,12 +419,12 @@ fn pointerButton(data: ?*anyopaque,pointer: ?*wayland.wl_pointer,serial: u32,tim
 }
 
 fn pointerAxis(data: ?*anyopaque,pointer: ?*wayland.wl_pointer,time: u32,axis: u32,value: wayland.wl_fixed_t) callconv(.c) void {
-    const window: *Implementation = @ptrCast(@alignCast(data));
+    const self: *@This() = @ptrCast(@alignCast(data));
     
-    window.base.pointerEventBus.append(.{
+    self.base.pointerEventBus.?.append(.{
         .scroll = .{
             .direction = if (wayland.wl_fixed_to_int(value) > 0) .Down else .Up,
-            .timestamp = meowUtilities.time.getUniversalTimestamp()
+            .timestamp = meowUtilities.time.getUniversalTimestamp(self.base.context.io)
         }
     });
     
@@ -470,46 +473,46 @@ fn pointerAxisValue120(data: ?*anyopaque,pointer: ?*wayland.wl_pointer,axis: u32
 }
 
 fn registryGlobal(data: ?*anyopaque,registry: ?*wayland.wl_registry,name: u32,interface: [*c]const u8,version: u32) callconv(.c) void {
-    const window: *Implementation = @ptrCast(@alignCast(data));
+    const self: *@This() = @ptrCast(@alignCast(data));
     
     if (std.mem.eql(u8,std.mem.span(interface),"wl_compositor")) {
-        window.compositor = @ptrCast(wayland.wl_registry_bind(registry,name,&wayland.wl_compositor_interface,version) orelse {
-            window.eventError = error.FailedToBindCompositor;
+        self.compositor = @ptrCast(wayland.wl_registry_bind(registry,name,&wayland.wl_compositor_interface,version) orelse {
+            self.eventError = error.FailedToBindCompositor;
             return;
         });
     }
     
     if (std.mem.eql(u8,std.mem.span(interface),"xdg_wm_base")) {
-        window.xdgWindowManagerBase = @ptrCast(wayland.wl_registry_bind(registry,name,&wayland.xdg_wm_base_interface,version) orelse {
-            window.eventError = error.FailedToBindXdgWindowManagerBase;
+        self.xdgWindowManagerBase = @ptrCast(wayland.wl_registry_bind(registry,name,&wayland.xdg_wm_base_interface,version) orelse {
+            self.eventError = error.FailedToBindXdgWindowManagerBase;
             return;
         });
         
-        window.xdgWindowManagerBaseListener = .{
+        self.xdgWindowManagerBaseListener = .{
             .ping = xdgWindowManagerBasePing
         };
         
-        if (wayland.xdg_wm_base_add_listener(window.xdgWindowManagerBase,&window.xdgWindowManagerBaseListener,window) == -1) {
-            window.eventError = error.FailedToAddXdgWindowManagerBaseListener;
+        if (wayland.xdg_wm_base_add_listener(self.xdgWindowManagerBase,&self.xdgWindowManagerBaseListener,self) == -1) {
+            self.eventError = error.FailedToAddXdgWindowManagerBaseListener;
             return;
         }
     }
     
     if (std.mem.eql(u8,std.mem.span(interface),"wl_seat")) {
-        window.seat = @ptrCast(wayland.wl_registry_bind(registry,name,&wayland.wl_seat_interface,version) orelse {
-            window.eventError = error.FailedToBindSeat;
+        self.seat = @ptrCast(wayland.wl_registry_bind(registry,name,&wayland.wl_seat_interface,version) orelse {
+            self.eventError = error.FailedToBindSeat;
             return;
         });
         
         // Initialize keyboard
         
         
-            window.keyboard.keyboard = wayland.wl_seat_get_keyboard(window.seat) orelse {
-                window.eventError = error.FailedToGetKeyboard;
+            self.keyboard.keyboard = wayland.wl_seat_get_keyboard(self.seat) orelse {
+                self.eventError = error.FailedToGetKeyboard;
                 return;
             };
             
-            window.keyboard.listener = .{
+            self.keyboard.listener = .{
                 .keymap = keyboardKeymap,
                 .enter = keyboardEnter,
                 .leave = keyboardLeave,
@@ -518,8 +521,8 @@ fn registryGlobal(data: ?*anyopaque,registry: ?*wayland.wl_registry,name: u32,in
                 .repeat_info = keyboardRepeatInformation
             };
             
-            if (wayland.wl_keyboard_add_listener(window.keyboard.keyboard,&window.keyboard.listener,window) == -1) {
-                window.eventError = error.FailedToAddKeyboardListener;
+            if (wayland.wl_keyboard_add_listener(self.keyboard.keyboard,&self.keyboard.listener,self) == -1) {
+                self.eventError = error.FailedToAddKeyboardListener;
                 return;
             }
         
@@ -527,12 +530,12 @@ fn registryGlobal(data: ?*anyopaque,registry: ?*wayland.wl_registry,name: u32,in
         // Initialize pointer
         
         
-            window.pointer.pointer = wayland.wl_seat_get_pointer(window.seat) orelse {
-                window.eventError = error.FailedToGetPointer;
+            self.pointer.pointer = wayland.wl_seat_get_pointer(self.seat) orelse {
+                self.eventError = error.FailedToGetPointer;
                 return;
             };
             
-            window.pointer.listener = .{
+            self.pointer.listener = .{
                 .enter = pointerEnter,
                 .leave = pointerLeave,
                 .motion = pointerMotion,
@@ -546,41 +549,41 @@ fn registryGlobal(data: ?*anyopaque,registry: ?*wayland.wl_registry,name: u32,in
                 .axis_value120 = pointerAxisValue120
             };
             
-            if (wayland.wl_pointer_add_listener(window.pointer.pointer,&window.pointer.listener,window) == -1) {
-                window.eventError = error.FailedToAddPointerListener;
+            if (wayland.wl_pointer_add_listener(self.pointer.pointer,&self.pointer.listener,self) == -1) {
+                self.eventError = error.FailedToAddPointerListener;
                 return;
             }
     }
     
     if (std.mem.eql(u8,std.mem.span(interface),"wl_shm")) {
-        window.sharedMemoryBuffer = @ptrCast(wayland.wl_registry_bind(registry,name,&wayland.wl_shm_interface,version) orelse {
-            window.eventError = error.FailedToBindSharedMemoryBuffer;
+        self.sharedMemoryBuffer = @ptrCast(wayland.wl_registry_bind(registry,name,&wayland.wl_shm_interface,version) orelse {
+            self.eventError = error.FailedToBindSharedMemoryBuffer;
             return;
         });
     }
 }
 
 fn xdgSurfaceConfigure(data: ?*anyopaque,xdgSurface: ?*wayland.xdg_surface,serial: u32) callconv(.c) void {
-    const window: *Implementation = @ptrCast(@alignCast(data));
+    const self: *@This() = @ptrCast(@alignCast(data));
     
     wayland.xdg_surface_ack_configure(xdgSurface,serial);
     
-    if (window.sizeChanged) {
-        window.base.eventBus.append(.{
+    if (self.sizeChanged) {
+        self.base.eventBus.append(.{
             .resize = .{
-                .x = @intCast(window.base.size[0]),
-                .y = @intCast(window.base.size[1])
+                .x = @intCast(self.base.size[0]),
+                .y = @intCast(self.base.size[1])
             }
         });
         
-        window.sizeChanged = false;
+        self.sizeChanged = false;
     }
 }
 
 fn xdgWindowToplevelClose(data: ?*anyopaque,xdgToplevel: ?*wayland.xdg_toplevel) callconv(.c) void {
-    const window: *Implementation = @ptrCast(@alignCast(data));
+    const self: *@This() = @ptrCast(@alignCast(data));
     
-    window.base.eventBus.append(.{
+    self.base.eventBus.append(.{
         .close = {}
     });
     
@@ -588,15 +591,15 @@ fn xdgWindowToplevelClose(data: ?*anyopaque,xdgToplevel: ?*wayland.xdg_toplevel)
 }
 
 fn xdgWindowToplevelConfigure(data: ?*anyopaque,xdgToplevel: ?*wayland.xdg_toplevel,width: i32,height: i32,states: ?*wayland.wl_array) callconv(.c) void {
-    const window: *Implementation = @ptrCast(@alignCast(data));
+    const self: *@This() = @ptrCast(@alignCast(data));
     
-    if (width > 0 and height > 0 and (width != window.base.size[0] or height != window.base.size[1])) {
-        window.base.size = .{
+    if (width > 0 and height > 0 and (width != self.base.size[0] or height != self.base.size[1])) {
+        self.base.size = .{
             @intCast(width),
             @intCast(height)
         };
         
-        window.sizeChanged = true;
+        self.sizeChanged = true;
     }
     
     _ = xdgToplevel;
@@ -616,9 +619,215 @@ fn xdgWindowToplevelWindowManagerCapabilities(data: ?*anyopaque,xdgToplevel: ?*w
     _ = capabilities;
 }
 
-pub fn setCursor(self: *LinuxBackend,cursor: moduleMain.Pointer.Cursor) !void {
-    const window: *Implementation = @ptrCast(@alignCast(self));
+pub fn create(base: *moduleMain.Window.Base) !*@This() {
+    const self: *@This() = base.context.allocator.create(@This()) catch unreachable;
+    errdefer base.context.allocator.destroy(self);
     
+    self.eventError = null;
+    self.compositor = null;
+    self.xdgWindowManagerBase = null;
+    self.seat = null;
+    self.sharedMemoryBuffer = null;
+    self.sizeChanged = false;
+    
+    self.base = base;
+    
+    self.display = wayland.wl_display_connect(null) orelse return error.FailedToConnectDisplay;
+    errdefer wayland.wl_display_disconnect(self.display);
+    
+    self.registry = wayland.wl_display_get_registry(self.display) orelse return error.FailedToGetRegistry;
+    errdefer wayland.wl_registry_destroy(self.registry);
+    
+    self.registryListener = .{
+        .global = registryGlobal
+    };
+    
+    if (wayland.wl_registry_add_listener(self.registry,&self.registryListener,self) == -1) return error.FailedToAddRegistryListener;
+    
+    if (wayland.wl_display_roundtrip(self.display) == -1) return error.FailedToPreformARoundTrip;
+    errdefer {
+        if (self.xdgWindowManagerBase != null) {
+            wayland.xdg_wm_base_destroy(self.xdgWindowManagerBase);
+        }
+        
+        if (self.seat != null) {
+            wayland.wl_seat_destroy(self.seat);
+        }
+        
+        if (self.sharedMemoryBuffer != null) {
+            wayland.wl_shm_destroy(self.sharedMemoryBuffer);
+        }
+    }
+    
+    if (self.compositor == null or self.xdgWindowManagerBase == null or self.seat == null or self.sharedMemoryBuffer == null) {
+        return error.MissingGlobals;
+    }
+    
+    self.surface = wayland.wl_compositor_create_surface(self.compositor) orelse return error.FailedToCreateSurface;
+    errdefer wayland.wl_surface_destroy(self.surface);
+    
+    self.xdgSurface = wayland.xdg_wm_base_get_xdg_surface(self.xdgWindowManagerBase,self.surface) orelse return error.FailedToGetXdgSurface;
+    errdefer wayland.xdg_surface_destroy(self.xdgSurface);
+    
+    self.xdgSurfaceListener = .{
+        .configure = xdgSurfaceConfigure
+    };
+    
+    if (wayland.xdg_surface_add_listener(self.xdgSurface,&self.xdgSurfaceListener,self) == -1) return error.FailedToAddXdgSurfaceListener;
+    
+    switch (self.base.kind) {
+        .Toplevel => {
+            self.xdgToplevel = wayland.xdg_surface_get_toplevel(self.xdgSurface) orelse return error.FailedToGetXdgToplevel;
+            
+            self.xdgToplevelListener = .{
+                .close = xdgWindowToplevelClose,
+                .configure = xdgWindowToplevelConfigure,
+                .configure_bounds = xdgWindowToplevelConfigureBounds,
+                .wm_capabilities = xdgWindowToplevelWindowManagerCapabilities
+            };
+            
+            if (wayland.xdg_toplevel_add_listener(self.xdgToplevel,&self.xdgToplevelListener,self) == -1) return error.FailedToAddXdgToplevelListener;
+            
+            wayland.xdg_toplevel_set_title(self.xdgToplevel,self.base.title);
+        }
+    }
+    errdefer switch (self.base.kind) {
+        .Toplevel => wayland.xdg_toplevel_destroy(self.xdgToplevel)
+    };
+    
+    wayland.xdg_surface_set_window_geometry(self.xdgSurface,0,0,@intCast(self.base.size[0]),@intCast(self.base.size[1]));
+    
+    wayland.wl_surface_commit(self.surface);
+    
+    // Initialize pointer cursor
+    
+    
+        self.pointer.surface = wayland.wl_compositor_create_surface(self.compositor) orelse return error.FailedToCreateCursorSurface;
+        errdefer wayland.wl_surface_destroy(self.pointer.surface);
+        
+        self.pointer.theme = wayland.wl_cursor_theme_load(null,24,self.sharedMemoryBuffer).?;
+        
+        try setCursor(self,.Arrow);
+    
+    
+    return self;
+}
+
+pub fn destroy(self: *@This()) void {
+    switch (self.base.kind) {
+        .Toplevel => wayland.xdg_toplevel_destroy(self.xdgToplevel)
+    }
+    
+    wayland.xdg_surface_destroy(self.xdgSurface);
+    wayland.wl_surface_destroy(self.surface);
+    wayland.xdg_wm_base_destroy(self.xdgWindowManagerBase);
+    wayland.wl_surface_destroy(self.pointer.surface);
+    wayland.wl_seat_destroy(self.seat);
+    wayland.wl_registry_destroy(self.registry);
+    wayland.wl_display_disconnect(self.display);
+    
+    self.base.context.allocator.destroy(self);
+}
+
+pub fn getRawHandles(self: *@This()) moduleMain.Window.RawHandles {
+    return .{
+        .wayland = .{
+            .display = self.display,
+            .surface = self.surface
+        }
+    };
+}
+
+pub fn stepMainLoop(self: *@This()) !void {
+    if (wayland.wl_display_dispatch_pending(self.display) == -1) return error.PendingDispatchEventsFailure;
+    
+    if (wayland.wl_display_prepare_read(self.display) < 0) {
+        if (wayland.wl_display_flush(self.display) == -1) return error.EventFlushFailure;
+        return;
+    }
+    
+    const fileDescriptor: i32 = wayland.wl_display_get_fd(self.display);
+    
+    var fileDescriptorPollResult: stdC.pollfd = .{
+        .fd = fileDescriptor,
+        .events = stdC.POLLIN
+    };
+    
+    if (stdC.poll(@ptrCast(&fileDescriptorPollResult),1,0) != -1 and (fileDescriptorPollResult.revents & stdC.POLLIN != 0)) {
+        if (wayland.wl_display_read_events(self.display) == -1) {
+            wayland.wl_display_cancel_read(self.display);
+            return;
+        }
+        
+        if (wayland.wl_display_dispatch_pending(self.display) == -1) return error.PendingDispatchEventsFailure;
+    } else {
+        wayland.wl_display_cancel_read(self.display);
+    }
+    
+    const nowTimestamp: meowUtilities.time.Timestamp = meowUtilities.time.getUniversalTimestamp(self.base.context.io);
+    
+    // Keyboard input repetition
+    
+    
+        if (self.keyboard.repeatTimestamp.nanoseconds - nowTimestamp.nanoseconds <= 0) {
+            if (self.keyboard.repeatingEvent != null) {
+                self.keyboard.repeatingEvent.?.timestamp = nowTimestamp;
+                
+                self.base.keyboardEventBus.?.append(.{
+                    .repeat = self.keyboard.repeatingEvent.?
+                });
+                
+                self.keyboard.repeatTimestamp = nowTimestamp.addDuration(.fromMicroseconds(std.time.us_per_s / self.keyboard.repeatRate));
+            }
+        }
+    
+    
+    // Update pointer cursor image
+    
+    
+        if (self.pointer.updateTimestamp.nanoseconds - nowTimestamp.nanoseconds <= 0) {
+            if (self.pointer.cursor != null) {
+                self.pointer.imageIndex = (self.pointer.imageIndex + 1) % self.pointer.cursor.?.image_count;
+                
+                const image: *wayland.wl_cursor_image = self.pointer.cursor.?.images[self.pointer.imageIndex].?;
+                
+                wayland.wl_pointer_set_cursor(self.pointer.pointer,self.pointer.enterSerial,self.pointer.surface,@intCast(image.hotspot_x),@intCast(image.hotspot_y));
+                
+                wayland.wl_surface_attach(self.pointer.surface,wayland.wl_cursor_image_get_buffer(image),0,0);
+                
+                wayland.wl_surface_damage(self.pointer.surface,0,0,@intCast(image.width),@intCast(image.height));
+                
+                wayland.wl_surface_commit(self.pointer.surface);
+                
+                self.pointer.updateTimestamp = nowTimestamp.addDuration(.fromMilliseconds(image.delay));
+            } else {
+                wayland.wl_pointer_set_cursor(self.pointer.pointer,self.pointer.enterSerial,null,0,0);
+                
+                self.pointer.updateTimestamp = nowTimestamp.addDuration(.fromMilliseconds(100));
+            }
+        }
+    
+    
+    if (self.eventError != null) {
+        return self.eventError.?;
+    }
+}
+
+pub fn setFullscreen(self: *@This(),state: bool) void {
+    if (state) {
+        switch (self.base.kind) {
+            .Toplevel => wayland.xdg_toplevel_set_fullscreen(self.xdgToplevel,null)
+        }
+    } else {
+        switch (self.base.kind) {
+            .Toplevel => wayland.xdg_toplevel_unset_fullscreen(self.xdgToplevel)
+        }
+    }
+    
+    self.base.state.fullscreen = state;
+}
+
+pub fn setCursor(self: *@This(),cursor: moduleMain.Pointer.Cursor) !void {
     const cursorName: ?[*:0]const u8 = switch (cursor) {
         .Arrow => "default",
         .Pointer => "pointer",
@@ -648,229 +857,12 @@ pub fn setCursor(self: *LinuxBackend,cursor: moduleMain.Pointer.Cursor) !void {
         .Hidden => null
     };
     
-    window.pointer.cursor = if (cursorName != null) wayland.wl_cursor_theme_get_cursor(window.pointer.theme,cursorName) else null;
+    self.pointer.cursor = if (cursorName != null) wayland.wl_cursor_theme_get_cursor(self.pointer.theme,cursorName) else null;
     
-    window.pointer.imageIndex = 0;
-    window.pointer.updateTimestamp = meowUtilities.time.getUniversalTimestamp();
+    self.pointer.imageIndex = 0;
+    self.pointer.updateTimestamp = meowUtilities.time.getUniversalTimestamp(self.base.context.io);
 }
 
-pub fn setCursorImage(self: *LinuxBackend,pixels: []const u8) void { // TODO: Implement
-    const window: *Implementation = @ptrCast(@alignCast(self));
-    _ = window; _ = pixels;
-}
-
-pub fn create(base: *moduleMain.Window.Base) !*LinuxBackend {
-    const window: *Implementation = base.allocator.create(Implementation) catch unreachable;
-    errdefer base.allocator.destroy(window);
-    
-    window.base = base;
-    
-    window.display = wayland.wl_display_connect(null) orelse return error.FailedToConnectDisplay;
-    errdefer wayland.wl_display_disconnect(window.display);
-    
-    window.registry = wayland.wl_display_get_registry(window.display) orelse return error.FailedToGetRegistry;
-    errdefer wayland.wl_registry_destroy(window.registry);
-    
-    window.eventError = null;
-    
-    window.xdgWindowManagerBase = null;
-    window.seat = null;
-    window.sharedMemoryBuffer = null;
-    
-    window.registryListener = .{
-        .global = registryGlobal
-    };
-    
-    if (wayland.wl_registry_add_listener(window.registry,&window.registryListener,window) == -1) return error.FailedToAddRegistryListener;
-    
-    if (wayland.wl_display_roundtrip(window.display) == -1) return error.FailedToPreformARoundTrip;
-    errdefer {
-        if (window.xdgWindowManagerBase != null) {
-            wayland.xdg_wm_base_destroy(window.xdgWindowManagerBase);
-        }
-        
-        if (window.seat != null) {
-            wayland.wl_seat_destroy(window.seat);
-        }
-        
-        if (window.sharedMemoryBuffer != null) {
-            wayland.wl_shm_destroy(window.sharedMemoryBuffer);
-        }
-    }
-    
-    if (window.compositor == null or window.xdgWindowManagerBase == null or window.seat == null or window.sharedMemoryBuffer == null) {
-        return error.MissingGlobals;
-    }
-    
-    window.surface = wayland.wl_compositor_create_surface(window.compositor) orelse return error.FailedToCreateSurface;
-    errdefer wayland.wl_surface_destroy(window.surface);
-    
-    window.xdgSurface = wayland.xdg_wm_base_get_xdg_surface(window.xdgWindowManagerBase,window.surface) orelse return error.FailedToGetXdgSurface;
-    errdefer wayland.xdg_surface_destroy(window.xdgSurface);
-    
-    window.xdgSurfaceListener = .{
-        .configure = xdgSurfaceConfigure
-    };
-    
-    if (wayland.xdg_surface_add_listener(window.xdgSurface,&window.xdgSurfaceListener,window) == -1) return error.FailedToAddXdgSurfaceListener;
-    
-    switch (window.base.kind) {
-        .Toplevel => {
-            window.xdgWindow.toplevel = wayland.xdg_surface_get_toplevel(window.xdgSurface) orelse return error.FailedToGetXdgToplevel;
-            
-            window.xdgWindowListener.toplevel = wayland.xdg_toplevel_listener {
-                .close = xdgWindowToplevelClose,
-                .configure = xdgWindowToplevelConfigure,
-                .configure_bounds = xdgWindowToplevelConfigureBounds,
-                .wm_capabilities = xdgWindowToplevelWindowManagerCapabilities
-            };
-            
-            if (wayland.xdg_toplevel_add_listener(window.xdgWindow.toplevel,&window.xdgWindowListener.toplevel,window) == -1) return error.FailedToAddXdgToplevelListener;
-            
-            wayland.xdg_toplevel_set_title(window.xdgWindow.toplevel,window.base.title);
-        }
-    }
-    errdefer {
-        switch (window.xdgWindow) {
-            .toplevel => |toplevel| wayland.xdg_toplevel_destroy(toplevel)
-        }
-    }
-    
-    wayland.xdg_surface_set_window_geometry(window.xdgSurface,0,0,@intCast(window.base.size[0]),@intCast(window.base.size[1]));
-    
-    wayland.wl_surface_commit(window.surface);
-    
-    window.keyboard.repeatingEvent = null;
-    
-    // Initialize pointer cursor
-    
-    
-        window.pointer.surface = wayland.wl_compositor_create_surface(window.compositor) orelse return error.FailedToCreateCursorSurface;
-        errdefer wayland.wl_surface_destroy(window.pointer.surface);
-        
-        window.pointer.theme = wayland.wl_cursor_theme_load(null,24,window.sharedMemoryBuffer).?;
-        
-        try setCursor(@ptrCast(window),.Arrow);
-    
-    
-    return @ptrCast(window);
-}
-
-pub fn destroy(self: *LinuxBackend) void {
-    const window: *Implementation = @ptrCast(@alignCast(self));
-    
-    wayland.xdg_toplevel_destroy(window.xdgWindow.toplevel);
-    wayland.xdg_surface_destroy(window.xdgSurface);
-    wayland.wl_surface_destroy(window.surface);
-    wayland.xdg_wm_base_destroy(window.xdgWindowManagerBase);
-    wayland.wl_surface_destroy(window.pointer.surface);
-    wayland.wl_seat_destroy(window.seat);
-    wayland.wl_registry_destroy(window.registry);
-    wayland.wl_display_disconnect(window.display);
-    
-    window.base.allocator.destroy(window);
-}
-
-pub fn getRawHandles(self: *LinuxBackend) moduleMain.Window.RawHandles {
-    const window: *Implementation = @ptrCast(@alignCast(self));
-    
-    return .{
-        .wayland = .{
-            .display = window.display,
-            .surface = window.surface
-        }
-    };
-}
-
-pub fn stepMainLoop(self: *LinuxBackend) !void {
-    const window: *Implementation = @ptrCast(@alignCast(self));
-    
-    if (wayland.wl_display_dispatch_pending(window.display) == -1) return error.PendingDispatchEventsFailure;
-    
-    if (wayland.wl_display_prepare_read(window.display) < 0) {
-        if (wayland.wl_display_flush(window.display) == -1) return error.EventFlushFailure;
-        return;
-    }
-    
-    const fileDescriptor: i32 = wayland.wl_display_get_fd(window.display);
-    
-    var fileDescriptorPollResult: stdC.pollfd = .{
-        .fd = fileDescriptor,
-        .events = stdC.POLLIN
-    };
-    
-    if (stdC.poll(@ptrCast(&fileDescriptorPollResult),1,0) != -1 and (fileDescriptorPollResult.revents & stdC.POLLIN != 0)) {
-        if (wayland.wl_display_read_events(window.display) == -1) {
-            wayland.wl_display_cancel_read(window.display);
-            return;
-        }
-        
-        if (wayland.wl_display_dispatch_pending(window.display) == -1) return error.PendingDispatchEventsFailure;
-    } else {
-        wayland.wl_display_cancel_read(window.display);
-    }
-    
-    const nowTimestamp: meowUtilities.time.Timestamp = meowUtilities.time.getUniversalTimestamp();
-    
-    // Keyboard input repetition
-    
-    
-        if (window.keyboard.repeatTimestamp - nowTimestamp <= 0) {
-            if (window.keyboard.repeatingEvent != null) {
-                window.keyboard.repeatingEvent.?.timestamp = nowTimestamp;
-                
-                window.base.keyboardEventBus.append(.{
-                    .repeat = window.keyboard.repeatingEvent.?
-                });
-                
-                window.keyboard.repeatTimestamp = nowTimestamp + std.time.us_per_s / window.keyboard.repeatRate;
-            }
-        }
-    
-    
-    // Update pointer cursor image
-    
-    
-        if (window.pointer.updateTimestamp - nowTimestamp <= 0) {
-            if (window.pointer.cursor != null) {
-                window.pointer.imageIndex = (window.pointer.imageIndex + 1) % window.pointer.cursor.?.image_count;
-                
-                const image: *wayland.wl_cursor_image = window.pointer.cursor.?.images[window.pointer.imageIndex].?;
-                
-                wayland.wl_pointer_set_cursor(window.pointer.pointer,window.pointer.enterSerial,window.pointer.surface,@intCast(image.hotspot_x),@intCast(image.hotspot_y));
-                
-                wayland.wl_surface_attach(window.pointer.surface,wayland.wl_cursor_image_get_buffer(image),0,0);
-                
-                wayland.wl_surface_damage(window.pointer.surface,0,0,@intCast(image.width),@intCast(image.height));
-                
-                wayland.wl_surface_commit(window.pointer.surface);
-                
-                window.pointer.updateTimestamp = nowTimestamp + std.time.us_per_s / image.delay;
-            } else {
-                wayland.wl_pointer_set_cursor(window.pointer.pointer,window.pointer.enterSerial,null,0,0);
-                
-                window.pointer.updateTimestamp = nowTimestamp + @as(meowUtilities.time.Timestamp,@intFromFloat(0.1 * std.time.us_per_s));
-            }
-        }
-    
-    
-    if (window.eventError != null) {
-        return window.eventError.?;
-    }
-}
-
-pub fn setFullscreen(self: *LinuxBackend,state: bool) void {
-    const window: *Implementation = @ptrCast(@alignCast(self));
-    
-    if (state) {
-        switch (window.xdgWindow) {
-            .toplevel => |toplevel| wayland.xdg_toplevel_set_fullscreen(toplevel,null)
-        }
-    } else {
-        switch (window.xdgWindow) {
-            .toplevel => |toplevel| wayland.xdg_toplevel_unset_fullscreen(toplevel)
-        }
-    }
-    
-    window.base.state.fullscreen = state;
+pub fn setCursorImage(self: *@This(),pixels: []const u8) void { // TODO: Implement
+    _ = self; _ = pixels;
 }
